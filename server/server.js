@@ -7,7 +7,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { computeStats } = require('../aggregator/aggregator');
+const aggregator = require('../aggregator/aggregator');
 
 const app = express();
 
@@ -23,47 +23,45 @@ app.use((err, req, res, next) => {
     });
 });
 
-// In-memory cache of stats
-let dashboardStats = {
-    sportsMarketCount: 0,
-    volume24h: 0,
-    openInterest: 0,
-    lastUpdated: null,
-    markets: []
-};
-
-// Basic routes
+// Basic stats endpoint
 app.get('/stats', (req, res) => {
-    res.json(dashboardStats);
+    res.json(aggregator.stats);
 });
 
+// Get markets by sport category
+app.get('/markets/:sport', (req, res) => {
+    const sport = req.params.sport.toUpperCase();
+    const markets = aggregator.stats.markets.filter(market => {
+        const title = market.title.toLowerCase();
+        switch(sport) {
+            case 'NBA': return title.includes('nba') || title.includes('basketball');
+            case 'NFL': return title.includes('nfl') || title.includes('football');
+            case 'MLB': return title.includes('mlb') || title.includes('baseball');
+            case 'NHL': return title.includes('nhl') || title.includes('hockey');
+            default: return false;
+        }
+    });
+    res.json(markets);
+});
+
+// Get top markets by volume
+app.get('/markets/top/volume', (req, res) => {
+    const topMarkets = [...aggregator.stats.markets]
+        .sort((a, b) => b.volume24h - a.volume24h)
+        .slice(0, 10);
+    res.json(topMarkets);
+});
+
+// Health check endpoint
 app.get('/health', (req, res) => {
-    res.json({ status: 'healthy', lastUpdate: dashboardStats.lastUpdated });
+    res.json({
+        status: 'healthy',
+        lastUpdate: aggregator.stats.lastUpdated,
+        marketCount: aggregator.stats.sportsMarketCount
+    });
 });
 
-// Function to periodically update the stats
-async function updateStats() {
-    try {
-        const newStats = await computeStats();
-        dashboardStats = newStats;
-        console.log('[Aggregator] Stats updated:', {
-            marketCount: dashboardStats.sportsMarketCount,
-            volume24h: dashboardStats.volume24h,
-            timestamp: dashboardStats.lastUpdated
-        });
-    } catch (err) {
-        console.error('[Aggregator Error]', err);
-    }
-}
-
-// Schedule updates every 5 minutes
-const UPDATE_INTERVAL = process.env.UPDATE_INTERVAL || 5 * 60 * 1000;
-setInterval(updateStats, UPDATE_INTERVAL);
-
-// Initial update on startup
-updateStats();
-
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-    console.log(`Server listening on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 }); 

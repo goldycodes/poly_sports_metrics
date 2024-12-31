@@ -1,0 +1,9 @@
+mkdir poly_sports_metrics
+cd poly_sports_metrics
+git init
+npm init -y
+mkdir aggregator server 
+npm install axios cors dotenv express express-rate-limit express-validator
+npm install nodemon --save-dev
+git add .
+git commit -m "Initial project setup" 

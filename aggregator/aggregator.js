@@ -9,77 +9,96 @@ require('dotenv').config();
 
 const axios = require('axios');
 
-const ENDPOINTS = {
-    clob: process.env.CLOB_API
-};
-
-// Helper function to identify sports markets
-function isSportsMarket(market) {
-    const sportsKeywords = [
-        'nba', 'nfl', 'mlb', 'nhl', 'soccer', 'football', 
-        'basketball', 'baseball', 'hockey', 'tennis',
-        'vs', 'game', 'match'
-    ];
-    
-    return market.question && sportsKeywords.some(keyword => 
-        market.question.toLowerCase().includes(keyword)
-    );
-}
-
 async function computeStats() {
     try {
-        // Fetch markets from CLOB API
-        const response = await axios.get(ENDPOINTS.clob);
+        console.log('Starting computeStats...');
+        const response = await axios.get('https://clob.polymarket.com/markets');
         
-        if (!response.data || !Array.isArray(response.data)) {
-            throw new Error('Invalid API response format');
+        let allMarkets = [];
+        if (response.data && typeof response.data === 'object') {
+            if (Array.isArray(response.data.markets)) {
+                allMarkets = response.data.markets;
+            } else if (Array.isArray(response.data.data)) {
+                allMarkets = response.data.data;
+            } else if (Array.isArray(response.data)) {
+                allMarkets = response.data;
+            }
         }
 
-        // Filter sports markets
-        const sportsMarkets = response.data.filter(isSportsMarket);
+        console.log('Total markets found:', allMarkets.length);
 
-        // Compute statistics
+        // Filter sports markets using tags
+        const sportsMarkets = allMarkets.filter(market => {
+            // Primary check: Look for "sports" tag
+            if (market.tags && Array.isArray(market.tags)) {
+                const hasSportsTag = market.tags.includes('sports');
+                
+                // Debug logging
+                if (hasSportsTag) {
+                    console.log('Found sports market:', {
+                        title: market.title || market.question,
+                        tags: market.tags,
+                        category: market.category
+                    });
+                }
+                
+                return hasSportsTag;
+            }
+            return false;
+        });
+
+        console.log(`Found ${sportsMarkets.length} sports markets`);
+
+        // Apply date and active filters
+        const now = new Date();
+        const oneMonthFromNow = new Date();
+        oneMonthFromNow.setMonth(now.getMonth() + 1);
+        
+        const activeRecentMarkets = sportsMarkets.filter(market => {
+            const endDate = new Date(market.endTime || market.resolutionTime);
+            const isActive = market.status === 'ACTIVE' || market.active === true;
+            const endsWithinMonth = endDate <= oneMonthFromNow;
+            const hasntEnded = endDate >= now;
+
+            return isActive && endsWithinMonth && hasntEnded;
+        });
+
+        console.log(`Found ${activeRecentMarkets.length} active sports markets ending within a month`);
+
+        // Sort markets by end date
+        activeRecentMarkets.sort((a, b) => {
+            const dateA = new Date(a.endTime || a.resolutionTime);
+            const dateB = new Date(b.endTime || b.resolutionTime);
+            return dateA - dateB;
+        });
+
         const stats = {
-            sportsMarketCount: sportsMarkets.length,
+            sportsMarketCount: activeRecentMarkets.length,
             volume24h: 0,
             openInterest: 0,
             lastUpdated: new Date().toISOString(),
-            markets: []
+            markets: activeRecentMarkets.map(market => ({
+                id: market.marketId || market.id,
+                title: market.title || market.question,
+                description: market.description || market.metadata?.description,
+                volume24h: parseFloat(market.volume24Hr || market.volume24h || 0),
+                startTime: market.startTime || market.gameStartTime,
+                endTime: market.endTime || market.resolutionTime,
+                active: market.status === 'ACTIVE' || market.active === true,
+                url: `https://polymarket.com/event/${market.slug || market.id}`,
+                tags: market.tags || [],
+                category: market.category || 'Unknown'
+            }))
         };
 
-        // Process each market
-        stats.markets = sportsMarkets.map(market => {
-            // Calculate market metrics from tokens
-            const tokens = market.tokens || [];
-            const volume = tokens.reduce((sum, token) => sum + (parseFloat(token.price) || 0), 0);
-            
-            return {
-                id: market.condition_id,
-                title: market.question,
-                description: market.description,
-                volume24h: volume,
-                startTime: market.game_start_time,
-                endDate: market.end_date_iso,
-                active: market.active,
-                tokens: tokens.map(token => ({
-                    outcome: token.outcome,
-                    price: token.price,
-                    winner: token.winner
-                }))
-            };
-        });
-
-        // Calculate totals
-        stats.markets.forEach(market => {
-            stats.volume24h += market.volume24h;
-        });
+        stats.volume24h = stats.markets.reduce((sum, market) => 
+            sum + (market.volume24h || 0), 0);
 
         return stats;
 
     } catch (error) {
-        console.error('[Aggregator] Error:', error.message);
+        console.error('Error in computeStats:', error);
         return {
-            error: error.message,
             sportsMarketCount: 0,
             volume24h: 0,
             openInterest: 0,

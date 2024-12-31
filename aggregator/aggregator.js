@@ -9,23 +9,41 @@ require('dotenv').config();
 
 const axios = require('axios');
 
-// Constants for API endpoints
-const POLYMARKET_API = process.env.POLYMARKET_API || 'https://clob.polymarket.com';
+// Update the API endpoint constants
+const BASE_API = 'https://gamma-api.polymarket.com/query';  // Changed to gamma API
+const ENDPOINTS = {
+    markets: `${BASE_API}/list-markets`,  // Updated endpoint
+    activeMarkets: `${BASE_API}/list-markets?market_status=Active`  // Updated with correct query param
+};
 
 async function fetchActiveMarkets() {
     try {
-        const response = await axios.get(`${POLYMARKET_API}/active-markets`);
-        console.log('API Response Status:', response.status);
+        // Add debug logging
+        console.log('Starting market fetch...');
         
-        // Handle the actual response structure from Polymarket
-        const markets = response.data?.markets || [];
-        console.log(`Fetched ${markets.length} markets`);
+        const response = await axios.get(ENDPOINTS.activeMarkets);
         
-        return markets;
+        // Log the response
+        console.log('API Response:', {
+            status: response.status,
+            dataReceived: !!response.data,
+            marketCount: response.data?.length || 0
+        });
+
+        if (!response.data) {
+            throw new Error('No data received from API');
+        }
+
+        // Log successful markets
+        console.log(`Successfully fetched ${response.data.length} markets`);
+        return response.data;
+
     } catch (error) {
-        console.error('Error details:', {
+        // Detailed error logging
+        console.error('Market fetch error:', {
             message: error.message,
-            response: error.response?.data
+            status: error.response?.status,
+            data: error.response?.data
         });
         return [];
     }

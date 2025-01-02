@@ -7,58 +7,91 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const aggregator = require('../aggregator/aggregator');
+const path = require('path');
+const { computeStats } = require('../aggregator/aggregator');
 
 const app = express();
 
-// Enable CORS
+// Middleware
 app.use(cors());
+app.use(express.json());
+app.use(express.static(path.join(__dirname, '../public')));
 
-// Add error handling middleware
-app.use((err, req, res, next) => {
-    console.error(err.stack);
-    res.status(500).json({
-        error: 'Something went wrong!',
-        message: err.message
-    });
+// Comprehensive security headers
+app.use((req, res, next) => {
+    // CSP that allows both Gamma and CLOB endpoints
+    res.setHeader(
+        'Content-Security-Policy',
+        [
+            "default-src 'self'",
+            "script-src 'self' 'unsafe-inline' cdn.jsdelivr.net",
+            "style-src 'self' 'unsafe-inline' cdn.jsdelivr.net",
+            "connect-src 'self' clob.polymarket.com gamma-api.polymarket.com",
+            "img-src 'self' data: cdn.jsdelivr.net",
+            "font-src 'self' cdn.jsdelivr.net",
+        ].join('; ')
+    );
+
+    // Additional security headers
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    
+    next();
 });
 
-// Basic stats endpoint
-app.get('/stats', (req, res) => {
-    res.json(aggregator.stats);
-});
+// Cache for stats
+let statsCache = {
+    data: null,
+    lastUpdated: null
+};
 
-// Get markets by sport category
-app.get('/markets/:sport', (req, res) => {
-    const sport = req.params.sport.toUpperCase();
-    const markets = aggregator.stats.markets.filter(market => {
-        const title = market.title.toLowerCase();
-        switch(sport) {
-            case 'NBA': return title.includes('nba') || title.includes('basketball');
-            case 'NFL': return title.includes('nfl') || title.includes('football');
-            case 'MLB': return title.includes('mlb') || title.includes('baseball');
-            case 'NHL': return title.includes('nhl') || title.includes('hockey');
-            default: return false;
+// Stats endpoint with caching
+app.get('/stats', async (req, res) => {
+    try {
+        // Check cache (5 minute expiry)
+        const now = Date.now();
+        const cacheExpiry = 5 * 60 * 1000; // 5 minutes
+
+        if (statsCache.data && statsCache.lastUpdated && 
+            (now - statsCache.lastUpdated) < cacheExpiry) {
+            return res.json(statsCache.data);
         }
-    });
-    res.json(markets);
+
+        // Fetch fresh data
+        console.log('Fetching fresh stats...');
+        const stats = await computeStats();
+        
+        // Update cache
+        statsCache = {
+            data: stats,
+            lastUpdated: now
+        };
+
+        res.json(stats);
+    } catch (error) {
+        console.error('API Error:', error);
+        res.status(500).json({
+            error: 'Failed to fetch stats',
+            message: error.message
+        });
+    }
 });
 
-// Get top markets by volume
-app.get('/markets/top/volume', (req, res) => {
-    const topMarkets = [...aggregator.stats.markets]
-        .sort((a, b) => b.volume24h - a.volume24h)
-        .slice(0, 10);
-    res.json(topMarkets);
+// Serve frontend
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-    res.json({
-        status: 'healthy',
-        lastUpdate: aggregator.stats.lastUpdated,
-        marketCount: aggregator.stats.sportsMarketCount
-    });
+// API endpoint
+app.get('/api/stats', async (req, res) => {
+    try {
+        const stats = await computeStats();
+        res.json(stats);
+    } catch (error) {
+        console.error('Error computing stats:', error);
+        res.status(500).json({ error: 'Failed to compute stats' });
+    }
 });
 
 const PORT = process.env.PORT || 3001;
